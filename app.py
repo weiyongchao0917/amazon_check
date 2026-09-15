@@ -90,7 +90,7 @@ class App(tk.Tk):
         summary = ttk.Frame(root, style="App.TFrame")
         summary.pack(fill="x", pady=16)
         self.cards = {}
-        for key, label in [("groups", "商品组"), ("rows", "异常 SKU"), ("multi", "多 SKU 组"), ("single", "单 SKU 组")]:
+        for key, label in [("groups", "商品组"), ("rows", "异常 SKU"), ("multi", "待详情判断"), ("single", "价格不处理")]:
             card = ttk.Frame(summary, style="Panel.TFrame", padding=(18, 12)); card.pack(side="left", fill="x", expand=True, padx=(0, 10))
             value = ttk.Label(card, text="—", style="Title.TLabel", font=("Segoe UI", 18, "bold")); value.pack(anchor="w")
             ttk.Label(card, text=label, style="Muted.TLabel").pack(anchor="w")
@@ -133,15 +133,14 @@ class App(tk.Tk):
             self.analysis = analyze_paths(self.report_var.get(), self.source_var.get())
             groups = self.analysis["groups"]
             for item in self.tree.get_children(): self.tree.delete(item)
-            multi = single = 0
+            needs_detail = 0
             for (product, shop), rows in list(groups.items())[:500]:
-                if len(rows) > 1: multi += 1
-                else: single += 1
+                needs_detail += 1
                 skus = "、".join(normalize(r.get("平台SKU")) for r in rows)
-                action = "下架商品" if len(rows) == 1 else "删除 SKU"
+                action = "查询详情后判断"
                 self.tree.insert("", "end", values=(product, shop, len(rows), skus, action))
             self.cards["groups"].configure(text=f"{len(groups):,}"); self.cards["rows"].configure(text=f"{len(self.analysis['rows']):,}")
-            self.cards["multi"].configure(text=f"{multi:,}"); self.cards["single"].configure(text=f"{single:,}")
+            self.cards["multi"].configure(text=f"{needs_detail:,}"); self.cards["single"].configure(text="不执行")
             self.status_var.set(f"已加载 {len(groups):,} 个商品组。仅包含配送相关异常，价格不会修改。")
             self.run_btn.configure(state="normal")
         except Exception as exc: messagebox.showerror("无法加载", str(exc))
