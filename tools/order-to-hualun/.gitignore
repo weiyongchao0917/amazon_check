@@ -1,0 +1,28 @@
+# Python caches and local environments
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# PyInstaller artifacts
+build/
+build_*/
+dist/
+dist_*/
+*.log
+
+# Application runtime data and generated workbooks
+gui_runtime/
+output/
+outputs/
+*.tmp
+
+# Editor and operating-system files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Microsoft Office lock files
+~$*.xlsx
