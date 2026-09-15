@@ -1,26 +1,55 @@
-# Miaoshou 配送异常 SKU 处理台
+# 跨境电商工具集
 
-这是一个 Windows 桌面工具，用于处理妙手 ERP TikTok 商品的配送异常规格。
+本仓库集中管理多个相互独立的跨境电商桌面工具。每个工具拥有自己的源码、依赖、测试、模板和运行说明，可以单独运行及打包。
 
-## 功能
+## 工具列表
 
-- 选择 `异常汇总` 工作簿和 SKU 源表，自动通过 `SKU ID` 关联店铺 ID。
-- 只处理总状态为 `配送需检查`、`价格和配送均需检查` 的记录。单独 `价格需检查` 不处理。
-- 按“全球产品 ID + 店铺 ID”分组，一次查询和提交一个商品组。
-- 多 SKU 商品删除异常规格；单 SKU 商品下架商品。
-- 详情查询失败或 SKU 核对不一致时标记为手动处理。
-- 结果写入新文件的 `处理结果` sheet，不覆盖原始文件。
-- 执行过程中显示逐组日志，可在当前商品组完成后暂停，查看已完成商品，再继续或停止后续任务。
+| 工具 | 目录 | 功能 |
+|---|---|---|
+| 妙手配送异常 SKU 处理台 | [`tools/miaoshou-delivery`](tools/miaoshou-delivery) | 读取配送异常记录，通过妙手 ERP 接口删除异常规格或下架单 SKU 商品 |
+| 订单转花轮采购单 | [`tools/order-to-hualun`](tools/order-to-hualun) | 查询 Amazon 美国站单件价格、检查 SKU 和规格，并生成花轮采购模板 |
 
-## 安装与启动
+## 妙手配送异常工具
 
 ```powershell
+cd tools\miaoshou-delivery
 python -m pip install -r requirements.txt
 python app.py
 ```
 
-需要 Python 3.10 或更高版本。Tkinter 通常随 Windows Python 安装包提供。
+运行测试：
 
-## 使用注意
+```powershell
+python -m unittest discover -s tests -p "test_*.py" -v
+```
 
-认证信息改为直接粘贴浏览器复制的完整 cURL。程序会自动解析 URL、Cookie、`x-app-zebra`/`x-app-rhino` 等请求头，并在运行期间复用会话；原始 cURL 只保存在内存中，不会写入文件、日志或仓库。执行前请检查预览表和输出路径。程序不会修改价格；如果接口返回失败，结果表会保留失败原因供人工处理。
+详细说明参见 [`tools/miaoshou-delivery/README.md`](tools/miaoshou-delivery/README.md)。
+
+## 订单转花轮工具
+
+```powershell
+cd tools\order-to-hualun
+python -m pip install -r requirements.txt
+python order_app.py
+```
+
+运行测试：
+
+```powershell
+python -m unittest discover -s tests -p "test_*.py" -v
+```
+
+生成 Windows 文件夹版程序：
+
+```powershell
+pyinstaller --noconfirm --clean order_app.spec
+```
+
+详细说明参见 [`tools/order-to-hualun/README.md`](tools/order-to-hualun/README.md)。
+
+## 仓库约定
+
+- 每个工具放在 `tools/<tool-name>` 下，并保持独立运行和测试。
+- 通用代码只有在多个工具确认需要同一实现后，才提取到 `shared/`。
+- `build`、`dist`、运行配置、运行状态、订单输入和生成结果不提交到 Git。
+- EXE 建议通过 GitHub Releases 发布，不直接提交到源码目录。
