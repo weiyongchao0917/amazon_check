@@ -1,4 +1,5 @@
 import unittest
+import threading
 
 from delivery_processor import DELIVERY_STATUSES, build_save_payload, classify_group, parse_curl_command
 
@@ -53,6 +54,12 @@ class DeliveryProcessorTests(unittest.TestCase):
         self.assertEqual(parsed["cookie"], "sid=123")
         self.assertEqual(parsed["headers"]["x-app-rhino"], "abc")
         self.assertEqual(parsed["body"], "a=1")
+
+    def test_pause_event_can_be_set_for_processor_control(self):
+        pause = threading.Event()
+        self.assertFalse(pause.is_set())
+        pause.set()
+        self.assertTrue(pause.is_set())
 
 
 if __name__ == "__main__":

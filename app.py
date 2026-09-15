@@ -39,6 +39,8 @@ class App(tk.Tk):
         self.configure(bg=BG)
         self.events = queue.Queue()
         self.stop_event = threading.Event()
+        self.pause_event = threading.Event()
+        self.pause_event.set()
         self.analysis = None
         self._styles()
         self._build()
@@ -112,11 +114,20 @@ class App(tk.Tk):
         self.tree.pack(side="left", fill="both", expand=True)
         scroll = ttk.Scrollbar(table_panel, orient="vertical", command=self.tree.yview); scroll.pack(side="right", fill="y"); self.tree.configure(yscrollcommand=scroll.set)
 
+        log_panel = ttk.Frame(root, style="Panel.TFrame", padding=14)
+        log_panel.pack(fill="both", expand=False, pady=(14, 0))
+        log_header = ttk.Frame(log_panel, style="Panel.TFrame")
+        log_header.pack(fill="x", pady=(0, 6))
+        ttk.Label(log_header, text="处理日志", style="Panel.TLabel", font=("Segoe UI", 12, "bold")).pack(side="left")
+        self.log_text = tk.Text(log_panel, height=6, wrap="word", bg=PANEL_2, fg=TEXT, insertbackground=TEXT, relief="flat", padx=8, pady=6, state="disabled")
+        self.log_text.pack(fill="both", expand=True)
+
         bottom = ttk.Frame(root, style="App.TFrame"); bottom.pack(fill="x", pady=(16, 0))
         self.progress = ttk.Progressbar(bottom, mode="determinate"); self.progress.pack(fill="x", pady=(0, 8))
         self.status_var = tk.StringVar(value="请先选择文件并加载预览")
         ttk.Label(bottom, textvariable=self.status_var, style="Sub.TLabel").pack(side="left")
         self.run_btn = ttk.Button(bottom, text="确认并开始处理", style="Accent.TButton", command=self.start_run, state="disabled"); self.run_btn.pack(side="right")
+        self.pause_btn = ttk.Button(bottom, text="暂停", style="Ghost.TButton", command=self.toggle_pause, state="disabled"); self.pause_btn.pack(side="right", padx=8)
         self.stop_btn = ttk.Button(bottom, text="停止后续任务", style="Ghost.TButton", command=self.stop_run, state="disabled"); self.stop_btn.pack(side="right", padx=8)
 
     def _file_row(self, parent, row, label, variable, hint):
@@ -146,6 +157,8 @@ class App(tk.Tk):
             self.cards["groups"].configure(text=f"{len(groups):,}"); self.cards["rows"].configure(text=f"{len(self.analysis['rows']):,}")
             self.cards["multi"].configure(text=f"{needs_detail:,}"); self.cards["single"].configure(text="不执行")
             self.status_var.set(f"已加载 {len(groups):,} 个商品组。仅包含配送相关异常，价格不会修改。")
+            self._clear_log()
+            self._append_log(f"已加载 {len(groups):,} 个商品组，等待确认执行。")
             self.run_btn.configure(state="normal")
             self.preview_run_btn.configure(state="normal")
         except Exception as exc: messagebox.showerror("无法加载", str(exc))
@@ -158,18 +171,32 @@ class App(tk.Tk):
         except ValueError as exc:
             messagebox.showerror("cURL 无法使用", str(exc)); return
         if not messagebox.askyesno("确认执行", "即将调用妙手接口删除异常 SKU 或下架单 SKU 商品。是否继续？"): return
-        self.run_btn.configure(state="disabled"); self.preview_run_btn.configure(state="disabled"); self.stop_btn.configure(state="normal"); self.stop_event.clear(); self.progress.configure(value=0, maximum=len(self.analysis["groups"]))
+        self.run_btn.configure(state="disabled"); self.preview_run_btn.configure(state="disabled"); self.stop_btn.configure(state="normal"); self.pause_btn.configure(state="normal", text="暂停"); self.stop_event.clear(); self.pause_event.set(); self.progress.configure(value=0, maximum=len(self.analysis["groups"]))
+        self._append_log("开始执行。每个商品组完成后会记录最终动作和结果。")
         threading.Thread(target=self._run_worker, daemon=True).start()
 
     def _run_worker(self):
         def callback(info): self.events.put(("progress", info))
         try:
             curl_text = self.curl_text.get("1.0", "end").strip()
-            result = process_delivery(Path(self.report_var.get()), Path(self.source_var.get()), Path(self.output_var.get()), curl_text, "", callback, self.stop_event)
+            result = process_delivery(Path(self.report_var.get()), Path(self.source_var.get()), Path(self.output_var.get()), curl_text, "", callback, self.stop_event, self.pause_event)
             self.events.put(("done", result))
         except Exception as exc: self.events.put(("error", str(exc)))
 
-    def stop_run(self): self.stop_event.set(); self.status_var.set("已请求停止，正在等待当前请求结束…"); self.stop_btn.configure(state="disabled")
+    def toggle_pause(self):
+        if self.pause_event.is_set():
+            self.pause_event.clear(); self.pause_btn.configure(text="继续"); self.status_var.set("已暂停：当前商品组完成后等待继续"); self._append_log("已暂停，当前请求完成后不会开始下一个商品组。")
+        else:
+            self.pause_event.set(); self.pause_btn.configure(text="暂停"); self.status_var.set("已继续执行"); self._append_log("已继续执行后续商品组。")
+
+    def stop_run(self):
+        self.stop_event.set(); self.pause_event.set(); self.status_var.set("已请求停止，正在等待当前请求结束…"); self.stop_btn.configure(state="disabled"); self.pause_btn.configure(state="disabled")
+
+    def _clear_log(self):
+        self.log_text.configure(state="normal"); self.log_text.delete("1.0", "end"); self.log_text.configure(state="disabled")
+
+    def _append_log(self, message):
+        self.log_text.configure(state="normal"); self.log_text.insert("end", message + "\n"); self.log_text.see("end"); self.log_text.configure(state="disabled")
 
     def _drain_events(self):
         try:
@@ -177,10 +204,12 @@ class App(tk.Tk):
                 kind, payload = self.events.get_nowait()
                 if kind == "progress":
                     self.progress.configure(value=payload["progress"]); self.status_var.set(f"处理 {payload['progress']}/{payload['total']}：{payload['productId']} · {payload['status']}")
+                    if payload.get("status") == "已完成" or payload.get("status") == "需手动处理":
+                        self._append_log(f"[{payload['progress']}/{payload['total']}] 商品 {payload['productId']} / 店铺 {payload['shopId']} | {payload.get('action', '')} | {payload.get('result', '')} | {payload.get('detail', '')}")
                 elif kind == "done":
-                    self.stop_btn.configure(state="disabled"); self.run_btn.configure(state="normal"); self.preview_run_btn.configure(state="normal"); self.status_var.set("处理完成：" + json.dumps(payload, ensure_ascii=False)); messagebox.showinfo("处理完成", "结果已写入新的 Excel 文件。")
+                    self.stop_btn.configure(state="disabled"); self.pause_btn.configure(state="disabled"); self.run_btn.configure(state="normal"); self.preview_run_btn.configure(state="normal"); self.status_var.set("处理完成：" + json.dumps(payload, ensure_ascii=False)); self._append_log("处理线程结束，结果文件已写出。\n" + json.dumps(payload, ensure_ascii=False)); messagebox.showinfo("处理完成", "结果已写入新的 Excel 文件。")
                 elif kind == "error":
-                    self.stop_btn.configure(state="disabled"); self.run_btn.configure(state="normal"); self.preview_run_btn.configure(state="normal"); messagebox.showerror("执行失败", payload)
+                    self.stop_btn.configure(state="disabled"); self.pause_btn.configure(state="disabled"); self.run_btn.configure(state="normal"); self.preview_run_btn.configure(state="normal"); self._append_log("执行失败：" + str(payload)); messagebox.showerror("执行失败", payload)
         except queue.Empty: pass
         self.after(120, self._drain_events)
 

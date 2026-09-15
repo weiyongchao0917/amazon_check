@@ -290,7 +290,8 @@ def _result_row(row: Mapping[str, Any], action: str, status: str, reason: str = 
 
 
 def process_delivery(report_path: Path, source_path: Path, output_path: Path, cookie: str, app_header: str = "",
-                     progress_callback=None, stop_event: threading.Event | None = None) -> Dict[str, int]:
+                     progress_callback=None, stop_event: threading.Event | None = None,
+                     pause_event: threading.Event | None = None) -> Dict[str, int]:
     rows, _ = _read_workbooks(report_path, source_path)
     groups: Dict[Tuple[str, str], List[Dict[str, Any]]] = defaultdict(list)
     for row in rows:
@@ -303,12 +304,19 @@ def process_delivery(report_path: Path, source_path: Path, output_path: Path, co
         if stop_event is not None and stop_event.is_set():
             stats["cancelled"] += total_groups - group_no + 1
             break
+        if pause_event is not None:
+            pause_event.wait()
+            if stop_event is not None and stop_event.is_set():
+                stats["cancelled"] += total_groups - group_no + 1
+                break
         if progress_callback:
             progress_callback({"progress": group_no, "total": total_groups, "productId": product_id, "shopId": shop_id, "rows": len(group), "status": "处理中"})
         if any(r.get("_mapping_error") for r in group) or not shop_id:
             for r in group:
                 results.append(_result_row(r, "跳过", "需手动处理", r.get("_mapping_error", "缺少店铺 ID")))
             stats["manual"] += len(group)
+            if progress_callback:
+                progress_callback({"progress": group_no, "total": total_groups, "productId": product_id, "shopId": shop_id, "rows": len(group), "status": "需手动处理", "action": "跳过", "result": "失败", "detail": r.get("_mapping_error", "缺少店铺 ID")})
             continue
         try:
             detail_response = client.get_detail(product_id, shop_id)
@@ -334,6 +342,7 @@ def process_delivery(report_path: Path, source_path: Path, output_path: Path, co
                 for r in group:
                     results.append(_result_row(r, "下架商品", "成功", "商品无可保留 SKU", json.dumps({"result": response.get("result")}, ensure_ascii=False)))
                 stats["unlisted"] += 1
+                completed_action, completed_result, completed_detail = "下架商品", "成功", "商品详情仅剩异常 SKU"
             else:
                 payload = build_save_payload(detail, remove_ids)
                 response = client.save_edit(payload, shop_id)
@@ -346,12 +355,14 @@ def process_delivery(report_path: Path, source_path: Path, output_path: Path, co
                 for r in group:
                     results.append(_result_row(r, "删除 SKU", "成功", "已从完整商品 SKU 列表移除", json.dumps({"code": response.get("code"), "result": response.get("result")}, ensure_ascii=False)))
                 stats["saved"] += 1
+                completed_action, completed_result, completed_detail = "删除 SKU", "成功", f"保留 {len(remaining_ids)} 个 SKU"
         except Exception as exc:
             for r in group:
                 results.append(_result_row(r, "跳过", "需手动处理", str(exc)))
             stats["manual"] += len(group)
+            completed_action, completed_result, completed_detail = "跳过", "需手动处理", str(exc)
         if progress_callback:
-            progress_callback({"progress": group_no, "total": total_groups, "productId": product_id, "shopId": shop_id, "rows": len(group), "status": "已完成"})
+            progress_callback({"progress": group_no, "total": total_groups, "productId": product_id, "shopId": shop_id, "rows": len(group), "status": "已完成", "action": completed_action, "result": completed_result, "detail": completed_detail})
         time.sleep(0.15)
     _write_results(report_path, output_path, results)
     stats["groups"] = len(groups)
