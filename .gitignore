@@ -1,1 +1,6 @@
 .worktrees/
+.codex-sheet-read/
+__pycache__/
+*.pyc
+outputs/
+SKU检查报告_配送处理结果.xlsx
