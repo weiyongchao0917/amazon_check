@@ -10,6 +10,8 @@ from __future__ import annotations
 import copy
 import json
 import os
+import re
+import shlex
 import time
 import threading
 from collections import defaultdict
@@ -25,6 +27,73 @@ DELIVERY_STATUSES = {"配送需检查", "价格和配送均需检查"}
 DETAIL_URL = "https://erp.91miaoshou.com/api/platform/tiktok/item/item/getItemDetail"
 SAVE_URL = "https://erp.91miaoshou.com/api/platform/tiktok/item/item/saveEditItem"
 UNLIST_URL = "https://erp.91miaoshou.com/api/platform/tiktok/item/item/updateItemStatusForsale"
+
+
+def _normalize_windows_curl(text: str) -> str:
+    """Turn Chrome's Windows cmd.exe cURL copy into parseable shell text."""
+    value = text.replace("\r", "")
+    value = re.sub(r"\^\s*\n", " ", value)
+    # Chrome escapes quotes, ampersands and percent signs for cmd.exe.
+    for escaped, plain in (("^\"", '\"'), ("^&", "&"), ("^%", "%"), ("^$", "$"), ("^^", "^")):
+        value = value.replace(escaped, plain)
+    return value
+
+
+def parse_curl_command(text: str) -> Dict[str, Any]:
+    """Extract reusable session headers from a copied curl command.
+
+    The request body and URL are retained for diagnostics, but the processor
+    intentionally supplies its own endpoint/form data for each operation.
+    """
+    normalized = _normalize_windows_curl(text).strip()
+    if not normalized or not re.search(r"(?:^|\s)curl(?:\s|$)", normalized, re.I):
+        raise ValueError("请粘贴完整的 cURL 请求（应以 curl 开头）")
+    try:
+        tokens = shlex.split(normalized, posix=True)
+    except ValueError as exc:
+        raise ValueError(f"cURL 引号格式无法解析：{exc}") from exc
+    if not tokens or tokens[0].lower() not in {"curl", "curl.exe"}:
+        raise ValueError("未识别到 curl 命令")
+    url = ""
+    headers: Dict[str, str] = {}
+    cookie = ""
+    body = ""
+    i = 1
+    header_flags = {"-h", "--header"}
+    cookie_flags = {"-b", "--cookie"}
+    body_flags = {"--data", "--data-raw", "--data-binary", "-d"}
+    while i < len(tokens):
+        token = tokens[i]
+        if token.lower() in header_flags and i + 1 < len(tokens):
+            raw = tokens[i + 1]
+            if ":" in raw:
+                name, value = raw.split(":", 1)
+                headers[name.strip()] = value.strip()
+            i += 2
+            continue
+        if token.lower() in cookie_flags and i + 1 < len(tokens):
+            cookie = tokens[i + 1].strip()
+            i += 2
+            continue
+        if token.lower() in body_flags and i + 1 < len(tokens):
+            body = tokens[i + 1]
+            i += 2
+            continue
+        if not token.startswith("-") and not url:
+            url = token
+        i += 1
+    if not cookie:
+        cookie = next((v for k, v in headers.items() if k.lower() == "cookie"), "")
+    if cookie:
+        headers["Cookie"] = cookie
+    if not url:
+        raise ValueError("cURL 中没有找到请求 URL")
+    if not cookie:
+        raise ValueError("cURL 中没有找到 Cookie（请保留 -b 参数或 Cookie 请求头）")
+    useful = {k.lower() for k in headers}
+    if "x-app-zebra" not in useful and "x-app-rhino" not in useful:
+        raise ValueError("cURL 中没有找到 x-app-zebra 或 x-app-rhino 请求头")
+    return {"url": url, "headers": headers, "cookie": cookie, "body": body}
 
 
 def normalize(value: Any) -> str:
@@ -118,13 +187,20 @@ def build_save_payload(detail: Mapping[str, Any], remove_ids: Set[str]) -> Dict[
 
 
 class MiaoshouClient:
-    def __init__(self, cookie: str, app_header: str):
+    def __init__(self, cookie: str, app_header: str = "", captured_headers: Mapping[str, str] | None = None):
         self.session = requests.Session()
         self.cookie = cookie.strip()
         self.app_header = app_header
+        self.captured_headers = dict(captured_headers or {})
+
+    @classmethod
+    def from_curl(cls, curl_text: str) -> "MiaoshouClient":
+        parsed = parse_curl_command(curl_text)
+        app_header = next((v for k, v in parsed["headers"].items() if k.lower() in {"x-app-zebra", "x-app-rhino"}), "")
+        return cls(parsed["cookie"], app_header, parsed["headers"])
 
     def _headers(self) -> Dict[str, str]:
-        return {
+        headers = {
             "accept": "application/json, text/plain, */*",
             "content-type": "application/x-www-form-urlencoded",
             "Cookie": self.cookie,
@@ -137,6 +213,14 @@ class MiaoshouClient:
             "x-referer": "https://erp.91miaoshou.com/tiktok/item/item",
             "x-timestamp": str(int(time.time())),
         }
+        for name, value in self.captured_headers.items():
+            lower = name.lower()
+            if lower in {"content-length", "host", "cookie", "x-timestamp"}:
+                continue
+            headers[name] = value
+        headers["Cookie"] = self.cookie
+        headers["x-timestamp"] = str(int(time.time()))
+        return headers
 
     def _post(self, url: str, data: Mapping[str, Any]) -> Dict[str, Any]:
         response = self.session.post(url, headers=self._headers(), data=data, timeout=20)
@@ -205,13 +289,13 @@ def _result_row(row: Mapping[str, Any], action: str, status: str, reason: str = 
     }
 
 
-def process_delivery(report_path: Path, source_path: Path, output_path: Path, cookie: str, app_header: str,
+def process_delivery(report_path: Path, source_path: Path, output_path: Path, cookie: str, app_header: str = "",
                      progress_callback=None, stop_event: threading.Event | None = None) -> Dict[str, int]:
     rows, _ = _read_workbooks(report_path, source_path)
     groups: Dict[Tuple[str, str], List[Dict[str, Any]]] = defaultdict(list)
     for row in rows:
         groups[(normalize(row["全球产品ID"]), normalize(row.get("_shopId")))].append(row)
-    client = MiaoshouClient(cookie, app_header)
+    client = MiaoshouClient.from_curl(cookie) if "curl" in cookie.lower() else MiaoshouClient(cookie, app_header)
     results: List[Dict[str, Any]] = []
     stats = defaultdict(int)
     total_groups = len(groups)

@@ -8,7 +8,7 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from delivery_processor import DELIVERY_STATUSES, _read_workbooks, process_delivery, normalize
+from delivery_processor import DELIVERY_STATUSES, _read_workbooks, parse_curl_command, process_delivery, normalize
 
 
 BG = "#0f172a"
@@ -34,8 +34,8 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Miaoshou · 配送异常 SKU 处理台")
-        self.geometry("1180x780")
-        self.minsize(980, 680)
+        self.geometry("1180x900")
+        self.minsize(980, 760)
         self.configure(bg=BG)
         self.events = queue.Queue()
         self.stop_event = threading.Event()
@@ -72,17 +72,18 @@ class App(tk.Tk):
         self.report_var = tk.StringVar()
         self.source_var = tk.StringVar()
         self.output_var = tk.StringVar()
-        self.cookie_var = tk.StringVar()
-        self.token_var = tk.StringVar()
         self._file_row(input_panel, 0, "异常汇总表", self.report_var, "选择包含“异常汇总”sheet 的 Excel")
         self._file_row(input_panel, 1, "SKU 源表", self.source_var, "用于通过 SKU ID 找店铺 ID")
         self._file_row(input_panel, 2, "结果文件", self.output_var, "默认生成在异常汇总表同目录")
-        ttk.Label(input_panel, text="妙手 Cookie", style="Panel.TLabel").grid(row=3, column=0, sticky="w", pady=(10, 0))
-        ttk.Entry(input_panel, textvariable=self.cookie_var, show="•", width=85).grid(row=3, column=1, sticky="ew", padx=12, pady=(10, 0))
-        ttk.Label(input_panel, text="粘贴请求里的整段 Cookie，仅运行时使用", style="Muted.TLabel").grid(row=3, column=2, sticky="w", pady=(10, 0))
-        ttk.Label(input_panel, text="Token / x-app-zebra", style="Panel.TLabel").grid(row=4, column=0, sticky="w", pady=(10, 0))
-        ttk.Entry(input_panel, textvariable=self.token_var, show="•", width=85).grid(row=4, column=1, sticky="ew", padx=12, pady=(10, 0))
-        ttk.Label(input_panel, text="粘贴请求头 x-app-zebra 的值", style="Muted.TLabel").grid(row=4, column=2, sticky="w", pady=(10, 0))
+        ttk.Label(input_panel, text="妙手接口 cURL", style="Panel.TLabel").grid(row=3, column=0, sticky="nw", pady=(10, 0))
+        curl_box = ttk.Frame(input_panel, style="Panel.TFrame")
+        curl_box.grid(row=3, column=1, columnspan=2, sticky="ew", padx=12, pady=(10, 0))
+        self.curl_text = tk.Text(curl_box, height=7, width=85, wrap="none", bg=PANEL_2, fg=TEXT, insertbackground=TEXT, relief="flat", padx=8, pady=7)
+        self.curl_text.pack(side="left", fill="both", expand=True)
+        curl_scroll = ttk.Scrollbar(curl_box, orient="vertical", command=self.curl_text.yview)
+        curl_scroll.pack(side="right", fill="y")
+        self.curl_text.configure(yscrollcommand=curl_scroll.set)
+        ttk.Label(input_panel, text="从浏览器复制完整 cURL，程序会自动读取 URL、Cookie、请求头和会话信息", style="Muted.TLabel").grid(row=4, column=1, columnspan=2, sticky="w", padx=12, pady=(4, 0))
         input_panel.columnconfigure(1, weight=1)
         ttk.Button(input_panel, text="加载并预览", style="Accent.TButton", command=self.load_preview).grid(row=5, column=1, sticky="w", pady=(18, 0))
 
@@ -146,7 +147,12 @@ class App(tk.Tk):
         except Exception as exc: messagebox.showerror("无法加载", str(exc))
 
     def start_run(self):
-        if not self.analysis or not self.cookie_var.get() or not self.token_var.get(): messagebox.showwarning("还缺少信息", "请先加载预览，并输入妙手 Cookie 与 Token / x-app-zebra。"); return
+        curl_text = self.curl_text.get("1.0", "end").strip()
+        if not self.analysis or not curl_text: messagebox.showwarning("还缺少信息", "请先加载预览，并粘贴完整的妙手 cURL。"); return
+        try:
+            parse_curl_command(curl_text)
+        except ValueError as exc:
+            messagebox.showerror("cURL 无法使用", str(exc)); return
         if not messagebox.askyesno("确认执行", "即将调用妙手接口删除异常 SKU 或下架单 SKU 商品。是否继续？"): return
         self.run_btn.configure(state="disabled"); self.stop_btn.configure(state="normal"); self.stop_event.clear(); self.progress.configure(value=0, maximum=len(self.analysis["groups"]))
         threading.Thread(target=self._run_worker, daemon=True).start()
@@ -154,7 +160,8 @@ class App(tk.Tk):
     def _run_worker(self):
         def callback(info): self.events.put(("progress", info))
         try:
-            result = process_delivery(Path(self.report_var.get()), Path(self.source_var.get()), Path(self.output_var.get()), self.cookie_var.get(), self.token_var.get(), callback, self.stop_event)
+            curl_text = self.curl_text.get("1.0", "end").strip()
+            result = process_delivery(Path(self.report_var.get()), Path(self.source_var.get()), Path(self.output_var.get()), curl_text, "", callback, self.stop_event)
             self.events.put(("done", result))
         except Exception as exc: self.events.put(("error", str(exc)))
 

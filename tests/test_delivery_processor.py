@@ -1,6 +1,6 @@
 import unittest
 
-from delivery_processor import DELIVERY_STATUSES, build_save_payload, classify_group
+from delivery_processor import DELIVERY_STATUSES, build_save_payload, classify_group, parse_curl_command
 
 
 class DeliveryProcessorTests(unittest.TestCase):
@@ -47,6 +47,12 @@ class DeliveryProcessorTests(unittest.TestCase):
         payload = build_save_payload(detail, {"sku-1"})
         self.assertEqual([s["id"] for s in payload["itemInfo"]["skus"]], ["sku-2"])
         self.assertNotIn("sku-1", [s["id"] for s in payload["itemInfo"]["skus"]])
+
+    def test_parse_curl_extracts_cookie_and_app_header(self):
+        parsed = parse_curl_command('curl "https://example.test/api" -H "x-app-rhino: abc" -b "sid=123" --data-raw "a=1"')
+        self.assertEqual(parsed["cookie"], "sid=123")
+        self.assertEqual(parsed["headers"]["x-app-rhino"], "abc")
+        self.assertEqual(parsed["body"], "a=1")
 
 
 if __name__ == "__main__":
