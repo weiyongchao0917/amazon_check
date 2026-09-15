@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from app import analyze_paths
+from app import analyze_paths, workspace_layout
 
 
 class AppHelpersTest(unittest.TestCase):
@@ -15,6 +15,9 @@ class AppHelpersTest(unittest.TestCase):
         # The final action must wait for the ERP detail response.
         abnormal_rows = [{"平台SKU": "BAD-SKU"}]
         self.assertEqual(len(abnormal_rows), 1)
+
+    def test_desktop_workspace_keeps_log_beside_preview(self):
+        self.assertEqual(workspace_layout(1180), "side_by_side")
 
 
 if __name__ == "__main__":
