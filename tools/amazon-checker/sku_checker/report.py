@@ -197,11 +197,12 @@ def write_report(
     ws2["A1"] = "需要人工处理（总状态 ≠ 正常）"
     ws2["A1"].font = title_font
     ws2["A1"].fill = title_fill
-    ws2.merge_cells("A1:U1")
+    ws2.merge_cells("A1:V1")
     abn_h = [
         "序号",
         "SKU ID",
         "全球产品ID",
+        "店铺ID",
         "平台SKU",
         "产品名称",
         "TikTok规格",
@@ -232,6 +233,7 @@ def write_report(
             i,
             r.get("sku_id"),
             r.get("product_id"),
+            r.get("shop_id"),  # 改动3：第 4 列取店铺ID
             r.get("asin"),
             r.get("product_name"),
             r.get("spec"),

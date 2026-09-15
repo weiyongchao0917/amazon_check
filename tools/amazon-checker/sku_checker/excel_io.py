@@ -62,7 +62,7 @@ def load_sku_rows(path: str | Path) -> list[dict[str, Any]]:
     i_price = col("本地展示价")
     if i_asin is None or i_price is None:
         raise ValueError(f"Excel 缺少必要列 平台SKU/本地展示价，当前表头: {headers}")
-
+    i_shop = col("店铺ID")  # <-- 新增：兼容各种常见的店铺列名
     i_sku = col("SKU ID")
     i_pid = col("产品ID")
     i_name = col("产品名称")
@@ -89,6 +89,7 @@ def load_sku_rows(path: str | Path) -> list[dict[str, Any]]:
             "row_num": n,
             "sku_id": _clean(r[i_sku]) if i_sku is not None else None,
             "product_id": _clean(r[i_pid]) if i_pid is not None else None,
+            "shop_id": _clean(r[i_shop]) if i_shop is not None else None,  # <-- 新增这一行
             "product_name": _clean(r[i_name]) if i_name is not None else None,
             "spec": _clean(r[i_spec]) if i_spec is not None else None,
             "asin": asin,

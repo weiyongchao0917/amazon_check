@@ -168,6 +168,7 @@ def _process_item(
     asin = item.get("asin") or ""
     base = {
         "sku_id": item.get("sku_id"), "product_id": item.get("product_id"),
+        "shop_id": item.get("shop_id"),  # <--- 就只加这一行！
         "product_name": item.get("product_name"), "spec": item.get("spec"),
         "asin": asin, "amazon_link": item.get("amazon_link"),
         "local_price": item.get("local_price"), "checked_at": checked_at,
