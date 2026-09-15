@@ -73,14 +73,18 @@ class App(tk.Tk):
         self.source_var = tk.StringVar()
         self.output_var = tk.StringVar()
         self.cookie_var = tk.StringVar()
+        self.token_var = tk.StringVar()
         self._file_row(input_panel, 0, "异常汇总表", self.report_var, "选择包含“异常汇总”sheet 的 Excel")
         self._file_row(input_panel, 1, "SKU 源表", self.source_var, "用于通过 SKU ID 找店铺 ID")
         self._file_row(input_panel, 2, "结果文件", self.output_var, "默认生成在异常汇总表同目录")
-        ttk.Label(input_panel, text="妙手 Cookie / Token", style="Panel.TLabel").grid(row=3, column=0, sticky="w", pady=(10, 0))
+        ttk.Label(input_panel, text="妙手 Cookie", style="Panel.TLabel").grid(row=3, column=0, sticky="w", pady=(10, 0))
         ttk.Entry(input_panel, textvariable=self.cookie_var, show="•", width=85).grid(row=3, column=1, sticky="ew", padx=12, pady=(10, 0))
-        ttk.Label(input_panel, text="仅运行时使用，不会保存", style="Muted.TLabel").grid(row=3, column=2, sticky="w", pady=(10, 0))
+        ttk.Label(input_panel, text="粘贴请求里的整段 Cookie，仅运行时使用", style="Muted.TLabel").grid(row=3, column=2, sticky="w", pady=(10, 0))
+        ttk.Label(input_panel, text="Token / x-app-zebra", style="Panel.TLabel").grid(row=4, column=0, sticky="w", pady=(10, 0))
+        ttk.Entry(input_panel, textvariable=self.token_var, show="•", width=85).grid(row=4, column=1, sticky="ew", padx=12, pady=(10, 0))
+        ttk.Label(input_panel, text="粘贴请求头 x-app-zebra 的值", style="Muted.TLabel").grid(row=4, column=2, sticky="w", pady=(10, 0))
         input_panel.columnconfigure(1, weight=1)
-        ttk.Button(input_panel, text="加载并预览", style="Accent.TButton", command=self.load_preview).grid(row=4, column=1, sticky="w", pady=(18, 0))
+        ttk.Button(input_panel, text="加载并预览", style="Accent.TButton", command=self.load_preview).grid(row=5, column=1, sticky="w", pady=(18, 0))
 
         summary = ttk.Frame(root, style="App.TFrame")
         summary.pack(fill="x", pady=16)
@@ -142,7 +146,7 @@ class App(tk.Tk):
         except Exception as exc: messagebox.showerror("无法加载", str(exc))
 
     def start_run(self):
-        if not self.analysis or not self.cookie_var.get(): messagebox.showwarning("还缺少信息", "请先加载预览，并输入妙手 Cookie / Token。"); return
+        if not self.analysis or not self.cookie_var.get() or not self.token_var.get(): messagebox.showwarning("还缺少信息", "请先加载预览，并输入妙手 Cookie 与 Token / x-app-zebra。"); return
         if not messagebox.askyesno("确认执行", "即将调用妙手接口删除异常 SKU 或下架单 SKU 商品。是否继续？"): return
         self.run_btn.configure(state="disabled"); self.stop_btn.configure(state="normal"); self.stop_event.clear(); self.progress.configure(value=0, maximum=len(self.analysis["groups"]))
         threading.Thread(target=self._run_worker, daemon=True).start()
@@ -150,7 +154,7 @@ class App(tk.Tk):
     def _run_worker(self):
         def callback(info): self.events.put(("progress", info))
         try:
-            result = process_delivery(Path(self.report_var.get()), Path(self.source_var.get()), Path(self.output_var.get()), self.cookie_var.get(), "23126fe530956cc04977660b5b177e06", callback, self.stop_event)
+            result = process_delivery(Path(self.report_var.get()), Path(self.source_var.get()), Path(self.output_var.get()), self.cookie_var.get(), self.token_var.get(), callback, self.stop_event)
             self.events.put(("done", result))
         except Exception as exc: self.events.put(("error", str(exc)))
 
