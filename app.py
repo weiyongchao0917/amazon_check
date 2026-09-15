@@ -98,7 +98,11 @@ class App(tk.Tk):
 
         table_panel = ttk.Frame(root, style="Panel.TFrame", padding=14)
         table_panel.pack(fill="both", expand=True)
-        ttk.Label(table_panel, text="执行预览", style="Panel.TLabel", font=("Segoe UI", 12, "bold")).pack(anchor="w", pady=(0, 8))
+        table_header = ttk.Frame(table_panel, style="Panel.TFrame")
+        table_header.pack(fill="x", pady=(0, 8))
+        ttk.Label(table_header, text="执行预览", style="Panel.TLabel", font=("Segoe UI", 12, "bold")).pack(side="left")
+        self.preview_run_btn = ttk.Button(table_header, text="确认并开始处理", style="Accent.TButton", command=self.start_run, state="disabled")
+        self.preview_run_btn.pack(side="right")
         cols = ("product", "shop", "count", "skus", "action")
         self.tree = ttk.Treeview(table_panel, columns=cols, show="headings", selectmode="none")
         headers = {"product":"全球产品 ID", "shop":"店铺 ID", "count":"异常数", "skus":"平台 SKU", "action":"拟执行操作"}
@@ -143,6 +147,7 @@ class App(tk.Tk):
             self.cards["multi"].configure(text=f"{needs_detail:,}"); self.cards["single"].configure(text="不执行")
             self.status_var.set(f"已加载 {len(groups):,} 个商品组。仅包含配送相关异常，价格不会修改。")
             self.run_btn.configure(state="normal")
+            self.preview_run_btn.configure(state="normal")
         except Exception as exc: messagebox.showerror("无法加载", str(exc))
 
     def start_run(self):
@@ -153,7 +158,7 @@ class App(tk.Tk):
         except ValueError as exc:
             messagebox.showerror("cURL 无法使用", str(exc)); return
         if not messagebox.askyesno("确认执行", "即将调用妙手接口删除异常 SKU 或下架单 SKU 商品。是否继续？"): return
-        self.run_btn.configure(state="disabled"); self.stop_btn.configure(state="normal"); self.stop_event.clear(); self.progress.configure(value=0, maximum=len(self.analysis["groups"]))
+        self.run_btn.configure(state="disabled"); self.preview_run_btn.configure(state="disabled"); self.stop_btn.configure(state="normal"); self.stop_event.clear(); self.progress.configure(value=0, maximum=len(self.analysis["groups"]))
         threading.Thread(target=self._run_worker, daemon=True).start()
 
     def _run_worker(self):
@@ -173,9 +178,9 @@ class App(tk.Tk):
                 if kind == "progress":
                     self.progress.configure(value=payload["progress"]); self.status_var.set(f"处理 {payload['progress']}/{payload['total']}：{payload['productId']} · {payload['status']}")
                 elif kind == "done":
-                    self.stop_btn.configure(state="disabled"); self.status_var.set("处理完成：" + json.dumps(payload, ensure_ascii=False)); messagebox.showinfo("处理完成", "结果已写入新的 Excel 文件。")
+                    self.stop_btn.configure(state="disabled"); self.run_btn.configure(state="normal"); self.preview_run_btn.configure(state="normal"); self.status_var.set("处理完成：" + json.dumps(payload, ensure_ascii=False)); messagebox.showinfo("处理完成", "结果已写入新的 Excel 文件。")
                 elif kind == "error":
-                    self.stop_btn.configure(state="disabled"); self.run_btn.configure(state="normal"); messagebox.showerror("执行失败", payload)
+                    self.stop_btn.configure(state="disabled"); self.run_btn.configure(state="normal"); self.preview_run_btn.configure(state="normal"); messagebox.showerror("执行失败", payload)
         except queue.Empty: pass
         self.after(120, self._drain_events)
 
