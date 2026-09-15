@@ -1,7 +1,11 @@
 import unittest
 import threading
+import tempfile
+from pathlib import Path
 
-from delivery_processor import DELIVERY_STATUSES, build_save_payload, classify_group, parse_curl_command
+from openpyxl import Workbook
+
+from delivery_processor import DELIVERY_STATUSES, _read_report, build_save_payload, classify_group, parse_curl_command
 
 
 class DeliveryProcessorTests(unittest.TestCase):
@@ -60,6 +64,23 @@ class DeliveryProcessorTests(unittest.TestCase):
         self.assertFalse(pause.is_set())
         pause.set()
         self.assertTrue(pause.is_set())
+
+    def test_report_reads_shop_id_without_source_workbook(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "report.xlsx"
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "异常汇总"
+            ws.append(["配送异常报告"])
+            ws.append(["SKU ID", "全球产品ID", "平台SKU", "总状态", "店铺ID", "店铺名称"])
+            ws.append(["sku-1", "product-1", "SELLER-1", "配送需检查", "shop-1", "测试店铺"])
+            wb.save(path)
+
+            rows = _read_report(path)
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["_shopId"], "shop-1")
+        self.assertEqual(rows[0]["_shopName"], "测试店铺")
 
 
 if __name__ == "__main__":

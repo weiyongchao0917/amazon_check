@@ -238,37 +238,27 @@ class MiaoshouClient:
         return self._post(UNLIST_URL, {"shopId": shop_id, "platformItemId": product_id, "newStatus": "forsale"})
 
 
-def _read_workbooks(report_path: Path, source_path: Path) -> Tuple[List[Dict[str, Any]], Dict[str, Dict[str, Any]]]:
+def _read_report(report_path: Path) -> List[Dict[str, Any]]:
     report_wb = load_workbook(report_path, read_only=True, data_only=True)
     report = report_wb["异常汇总"]
     headers = [c.value for c in report[2]]
     index = {str(h): i for i, h in enumerate(headers)}
+    shop_id_header = next((name for name in ("店铺ID", "店铺 ID", "shopId") if name in index), None)
+    if shop_id_header is None:
+        raise ValueError("异常汇总表缺少店铺ID列（支持：店铺ID、店铺 ID、shopId）")
     rows: List[Dict[str, Any]] = []
     for values in report.iter_rows(min_row=3, values_only=True):
         if values[index["总状态"]] not in DELIVERY_STATUSES:
             continue
         row = {h: values[i] if i < len(values) else None for i, h in enumerate(headers)}
+        row["_shopId"] = normalize(values[index[shop_id_header]])
+        row["_shopName"] = row.get("店铺名称", "")
+        row["_site"] = row.get("站点", "")
+        if not row["_shopId"]:
+            row["_mapping_error"] = "异常汇总表中的店铺ID为空"
         rows.append(row)
-    source_wb = load_workbook(source_path, read_only=True, data_only=True)
-    source = source_wb.active
-    source_headers = [c.value for c in source[1]]
-    source_index = {str(h): i for i, h in enumerate(source_headers)}
-    mapping: Dict[str, Dict[str, Any]] = {}
-    for values in source.iter_rows(min_row=2, values_only=True):
-        sku_id = normalize(values[source_index["SKU ID"]])
-        if sku_id:
-            mapping[sku_id] = {
-                "shopId": normalize(values[source_index["店铺ID"]]),
-                "shopName": values[source_index["店铺名称"]],
-                "site": values[source_index["站点"]],
-            }
-    for row in rows:
-        src = mapping.get(normalize(row["SKU ID"]))
-        if not src:
-            row["_mapping_error"] = "源表中找不到 SKU ID"
-        else:
-            row.update({f"_{k}": v for k, v in src.items()})
-    return rows, mapping
+    report_wb.close()
+    return rows
 
 
 def _result_row(row: Mapping[str, Any], action: str, status: str, reason: str = "", response: str = "") -> Dict[str, Any]:
@@ -289,10 +279,10 @@ def _result_row(row: Mapping[str, Any], action: str, status: str, reason: str = 
     }
 
 
-def process_delivery(report_path: Path, source_path: Path, output_path: Path, cookie: str, app_header: str = "",
+def process_delivery(report_path: Path, output_path: Path, cookie: str, app_header: str = "",
                      progress_callback=None, stop_event: threading.Event | None = None,
                      pause_event: threading.Event | None = None) -> Dict[str, int]:
-    rows, _ = _read_workbooks(report_path, source_path)
+    rows = _read_report(report_path)
     groups: Dict[Tuple[str, str], List[Dict[str, Any]]] = defaultdict(list)
     for row in rows:
         groups[(normalize(row["全球产品ID"]), normalize(row.get("_shopId")))].append(row)
@@ -393,10 +383,9 @@ def _write_results(report_path: Path, output_path: Path, results: Iterable[Mappi
 
 if __name__ == "__main__":
     report = Path(os.environ.get("SKU_REPORT", r"C:\Users\youngChar\Documents\SKU检查报告.xlsx"))
-    source = Path(os.environ.get("SKU_SOURCE", r"F:\check_result\0914\导出#SKU_2026_09_14_13_51_42.xlsx"))
     output = Path(os.environ.get("SKU_OUTPUT", str(report.with_name("SKU检查报告_配送处理结果.xlsx"))))
     cookie = os.environ.get("MIAOSHOU_COOKIE", "")
     if not cookie:
         raise SystemExit("MIAOSHOU_COOKIE is required")
     app_header = os.environ.get("MIAOSHOU_APP_HEADER", "23126fe530956cc04977660b5b177e06")
-    print(json.dumps(process_delivery(report, source, output, cookie, app_header), ensure_ascii=False))
+    print(json.dumps(process_delivery(report, output, cookie, app_header), ensure_ascii=False))

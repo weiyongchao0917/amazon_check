@@ -8,7 +8,7 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from delivery_processor import DELIVERY_STATUSES, _read_workbooks, parse_curl_command, process_delivery, normalize
+from delivery_processor import DELIVERY_STATUSES, _read_report, parse_curl_command, process_delivery, normalize
 
 
 BG = "#0f172a"
@@ -26,8 +26,8 @@ def workspace_layout(window_width: int) -> str:
     return "side_by_side" if window_width >= 900 else "stacked"
 
 
-def analyze_paths(report: str, source: str) -> dict:
-    rows, _ = _read_workbooks(Path(report), Path(source))
+def analyze_paths(report: str) -> dict:
+    rows = _read_report(Path(report))
     groups = {}
     for row in rows:
         key = (normalize(row.get("全球产品ID")), normalize(row.get("_shopId")))
@@ -77,22 +77,20 @@ class App(tk.Tk):
         input_panel = ttk.Frame(root, style="Panel.TFrame", padding=18)
         input_panel.pack(fill="x")
         self.report_var = tk.StringVar()
-        self.source_var = tk.StringVar()
         self.output_var = tk.StringVar()
         self._file_row(input_panel, 0, "异常汇总表", self.report_var, "选择包含“异常汇总”sheet 的 Excel")
-        self._file_row(input_panel, 1, "SKU 源表", self.source_var, "用于通过 SKU ID 找店铺 ID")
-        self._file_row(input_panel, 2, "结果文件", self.output_var, "默认生成在异常汇总表同目录")
-        ttk.Label(input_panel, text="妙手接口 cURL", style="Panel.TLabel").grid(row=3, column=0, sticky="nw", pady=(10, 0))
+        self._file_row(input_panel, 1, "结果文件", self.output_var, "默认生成在异常汇总表同目录")
+        ttk.Label(input_panel, text="妙手接口 cURL", style="Panel.TLabel").grid(row=2, column=0, sticky="nw", pady=(10, 0))
         curl_box = ttk.Frame(input_panel, style="Panel.TFrame")
-        curl_box.grid(row=3, column=1, columnspan=2, sticky="ew", padx=12, pady=(10, 0))
+        curl_box.grid(row=2, column=1, columnspan=2, sticky="ew", padx=12, pady=(10, 0))
         self.curl_text = tk.Text(curl_box, height=7, width=85, wrap="none", bg=PANEL_2, fg=TEXT, insertbackground=TEXT, relief="flat", padx=8, pady=7)
         self.curl_text.pack(side="left", fill="both", expand=True)
         curl_scroll = ttk.Scrollbar(curl_box, orient="vertical", command=self.curl_text.yview)
         curl_scroll.pack(side="right", fill="y")
         self.curl_text.configure(yscrollcommand=curl_scroll.set)
-        ttk.Label(input_panel, text="从浏览器复制完整 cURL，程序会自动读取 URL、Cookie、请求头和会话信息", style="Muted.TLabel").grid(row=4, column=1, columnspan=2, sticky="w", padx=12, pady=(4, 0))
+        ttk.Label(input_panel, text="从浏览器复制完整 cURL，程序会自动读取 URL、Cookie、请求头和会话信息", style="Muted.TLabel").grid(row=3, column=1, columnspan=2, sticky="w", padx=12, pady=(4, 0))
         input_panel.columnconfigure(1, weight=1)
-        ttk.Button(input_panel, text="加载并预览", style="Accent.TButton", command=self.load_preview).grid(row=5, column=1, sticky="w", pady=(18, 0))
+        ttk.Button(input_panel, text="加载并预览", style="Accent.TButton", command=self.load_preview).grid(row=4, column=1, sticky="w", pady=(18, 0))
 
         summary = ttk.Frame(root, style="App.TFrame")
         summary.pack(fill="x", pady=16)
@@ -160,8 +158,8 @@ class App(tk.Tk):
 
     def load_preview(self):
         try:
-            if not self.report_var.get() or not self.source_var.get(): raise ValueError("请先选择异常汇总表和 SKU 源表")
-            self.analysis = analyze_paths(self.report_var.get(), self.source_var.get())
+            if not self.report_var.get(): raise ValueError("请先选择异常汇总表")
+            self.analysis = analyze_paths(self.report_var.get())
             groups = self.analysis["groups"]
             for item in self.tree.get_children(): self.tree.delete(item)
             for (product, shop), rows in list(groups.items())[:500]:
@@ -192,7 +190,7 @@ class App(tk.Tk):
     def _run_worker(self):
         def callback(info): self.events.put(("progress", info))
         try:
-            result = process_delivery(Path(self.report_var.get()), Path(self.source_var.get()), Path(self.output_var.get()), self.active_curl, "", callback, self.stop_event, self.pause_event)
+            result = process_delivery(Path(self.report_var.get()), Path(self.output_var.get()), self.active_curl, "", callback, self.stop_event, self.pause_event)
             self.events.put(("done", result))
         except Exception as exc: self.events.put(("error", str(exc)))
 

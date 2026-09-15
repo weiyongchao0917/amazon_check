@@ -8,7 +8,7 @@ from app import analyze_paths, workspace_layout
 class AppHelpersTest(unittest.TestCase):
     def test_missing_paths_raise_clear_error(self):
         with self.assertRaises(FileNotFoundError):
-            analyze_paths("missing-report.xlsx", "missing-source.xlsx")
+            analyze_paths("missing-report.xlsx")
 
     def test_preview_does_not_infer_product_action_from_exception_row_count(self):
         # One abnormal row can belong to a product with many normal SKUs.
