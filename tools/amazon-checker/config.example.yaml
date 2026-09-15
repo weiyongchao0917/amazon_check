@@ -1,0 +1,72 @@
+# SKU 检查工具配置示例
+# 复制为 config.yaml 后按需修改。默认无需代理即可运行。
+
+input_excel: ""          # 留空则运行时用命令行参数指定
+output_dir: "./output"
+
+# 价格规则
+price_multiplier: 2.8
+price_threshold: 0.10    # 10%
+stock_warning_threshold: 5  # 库存数量少于此值时提示“库存不足”
+
+# 配送
+zip_code: "91730"              # 当前默认值，客户可修改
+# 用户指定允许最晚送达日期（含当天），格式 YYYY-MM-DD。
+# 不再由程序计算工作日、周末或节假日。
+delivery:
+  latest_allowed_date: "2026-07-25"
+
+# 请求
+request_timeout: 25
+workers: 1                         # 受控并发数，仅允许 1、3、5；1 保持串行
+max_retries: 2                    # 首次请求 + 2次重试 = 每条最多尝试3次
+delay_between_requests: [1.5, 3.5]   # 秒，随机区间
+max_consecutive_blocks: 8            # 连续访问受限次数，触发熔断提示
+impersonate: "chrome"
+
+# 代理（默认关闭 = 直连）
+proxy:
+  enabled: false
+  # mode: none | list | file | api | fixed
+  mode: none
+  protocol_default: http
+
+  # mode=list 时：每行一条
+  # 支持:
+  #   http://ip:port
+  #   http://user:pass@ip:port
+  #   socks5://ip:port
+  #   ip:port
+  #   user:pass@ip:port
+  list_file: ""          # 或使用 list_text
+  list_text: ""
+
+  # mode=api 时：由客户填写自己的代理提取接口
+  api:
+    # 完整 URL，可使用 {key}、{num} 占位；固定 count/num 参数也会被下方 num 覆盖
+    url: ""
+    key: ""
+    auth_user: ""        # 使用代理时的认证用户名，可空
+    auth_password: ""    # 使用代理时的认证密码，可空
+    num: 50
+    extra_params: {}
+    # parser: auto 自动兼容纯文本及常见 JSON 字段
+    parser: auto
+    deadline_margin_seconds: 45
+    min_pool_size: 5
+    max_uses_per_proxy: 2
+
+  # mode=fixed：固定网关 + 用户名密码，不需要 API URL，不限制使用次数。
+  fixed:
+    protocol: http       # http 或 socks5
+    host: ""              # 例如 global.rotgb.711proxy.com
+    port: 10000
+    username: ""          # 区域、会话参数可由服务商编码在用户名中
+    password: ""
+
+  # 启用代理后采用严格模式：池空、提取失败或代理耗尽时停止当前 SKU，绝不回退直连。
+  # GUI 的“测试代理”会依次验证提取、HTTPS CONNECT 和 Amazon 连通性。
+
+# 断点
+resume: true
+state_file: "./output/run_state.json"

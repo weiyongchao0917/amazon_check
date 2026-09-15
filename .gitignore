@@ -1,5 +1,6 @@
 .worktrees/
 .codex-sheet-read/
+/tools/amazon_check/
 
 # Python caches and local environments
 **/__pycache__/
@@ -18,9 +19,14 @@
 **/gui_runtime/
 **/output/
 **/outputs/
+**/config.yaml
+**/run_state.json
+**/order_config.json
 SKU检查报告_配送处理结果.xlsx
 *.log
 *.tmp
+*.exe
+*.zip
 
 # Editors, operating system, and Microsoft Office lock files
 .idea/

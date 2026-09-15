@@ -8,6 +8,7 @@
 |---|---|---|
 | 妙手配送异常 SKU 处理台 | [`tools/miaoshou-delivery`](tools/miaoshou-delivery) | 读取配送异常记录，通过妙手 ERP 接口删除异常规格或下架单 SKU 商品 |
 | 订单转花轮采购单 | [`tools/order-to-hualun`](tools/order-to-hualun) | 查询 Amazon 美国站单件价格、检查 SKU 和规格，并生成花轮采购模板 |
+| Amazon SKU 检查工具 | [`tools/amazon-checker`](tools/amazon-checker) | 读取 TikTok Shop SKU 表，查询 Amazon 美国站价格与配送时效，并生成检查报告 |
 
 ## 妙手配送异常工具
 
@@ -46,6 +47,28 @@ pyinstaller --noconfirm --clean order_app.spec
 ```
 
 详细说明参见 [`tools/order-to-hualun/README.md`](tools/order-to-hualun/README.md)。
+
+## Amazon SKU 检查工具
+
+```powershell
+cd tools\amazon-checker
+python -m pip install -r requirements.txt
+python app.py
+```
+
+命令行运行：
+
+```powershell
+python -m sku_checker.main "导出SKU.xlsx"
+```
+
+运行测试：
+
+```powershell
+python -m unittest discover -s tests -p "test_*.py" -v
+```
+
+详细说明参见 [`tools/amazon-checker/README.md`](tools/amazon-checker/README.md)。
 
 ## 仓库约定
 
