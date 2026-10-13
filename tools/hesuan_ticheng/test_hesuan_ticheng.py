@@ -1,5 +1,5 @@
 import pandas as pd
-from hesuan_ticheng import calculate_profit
+from hesuan_ticheng import calculate_profit, export_result
 
 
 def main_row(order="100", revenue=50, product_id="P1", quantity=2):
@@ -85,3 +85,27 @@ def test_loss_orders_are_listed_with_negative_profit():
     result = calculate_profit(main, purchase, None)
     assert result.rows[0]["订单利润"] == -11
     assert result.summary["亏损订单明细"] == [{"订单编号": "500", "亏损金额": 11}]
+
+
+def test_export_splits_profit_and_loss_sheets_and_orders_profit_columns(tmp_path):
+    main = pd.DataFrame([
+        main_row(order="600", revenue=50),
+        main_row(order="601", revenue=10),
+    ])
+    purchase = pd.DataFrame([
+        purchase_row("600", 20),
+        purchase_row("601", 20),
+    ])
+    result = calculate_profit(main, purchase, None)
+    output = export_result(result, tmp_path / "result.xlsx")
+
+    import openpyxl
+    workbook = openpyxl.load_workbook(output, data_only=True)
+    assert workbook.sheetnames == ["汇总", "盈利订单", "亏损订单", "待核对订单"]
+    assert workbook["汇总"]["D3"].value is None
+    profit_headers = [cell.value for cell in workbook["盈利订单"][1]]
+    loss_headers = [cell.value for cell in workbook["亏损订单"][1]]
+    assert "下单时间" not in profit_headers
+    assert profit_headers[profit_headers.index("平台回款金额") + 1:profit_headers.index("平台回款金额") + 4] == ["采用成本", "物流成本", "订单利润"]
+    assert loss_headers == profit_headers
+    assert workbook["亏损订单"].cell(2, loss_headers.index("订单利润") + 1).value == -11

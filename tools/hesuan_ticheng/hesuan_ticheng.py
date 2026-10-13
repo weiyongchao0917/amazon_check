@@ -285,62 +285,59 @@ def export_result(result: CalculationResult, output_path: Path) -> Path:
     workbook = Workbook()
     summary_sheet = workbook.active
     summary_sheet.title = "汇总"
-    detail_sheet = workbook.create_sheet("订单利润")
     summary_sheet["A1"] = "订单利润核算"
     summary_sheet["A1"].font = Font(size=16, bold=True, color="FFFFFF")
     summary_sheet["A1"].fill = PatternFill("solid", fgColor="1F4E78")
-    summary_sheet.merge_cells("A1:E1")
+    summary_sheet.merge_cells("A1:B1")
     summary_sheet["A2"] = "计算规则"
     summary_sheet["B2"] = "有效采购子订单各计 $1 物流；无有效采购记录时，商品表回退按一个履约单计 $1。"
     summary_sheet.merge_cells("B2:E2")
-    summary_sheet["A3"] = "亏损订单数"
-    summary_sheet["B3"] = len(result.summary.get("亏损订单明细", []))
-    summary_sheet["D3"] = "亏损订单号"
-    summary_sheet["E3"] = "亏损金额"
-    header_fill = PatternFill("solid", fgColor="D9EAF7")
-    for cell in (summary_sheet["A3"], summary_sheet["B3"], summary_sheet["D3"], summary_sheet["E3"]):
-        cell.font = Font(bold=True)
-        cell.fill = header_fill
-    for loss_index, detail in enumerate(result.summary.get("亏损订单明细", []), 4):
-        summary_sheet.cell(loss_index, 4, detail["订单编号"])
-        amount_cell = summary_sheet.cell(loss_index, 5, detail["亏损金额"])
-        amount_cell.number_format = '$#,##0.00;[Red]-$#,##0.00'
-    if not result.summary.get("亏损订单明细"):
-        summary_sheet["D4"] = "无亏损订单"
     metric_values = ((label, value) for label, value in result.summary.items() if label not in {"亏损订单数", "亏损订单明细"})
-    for row_index, (label, value) in enumerate(metric_values, 5):
+    for row_index, (label, value) in enumerate(metric_values, 4):
         summary_sheet.cell(row_index, 1, label)
         summary_sheet.cell(row_index, 2, value)
     summary_sheet.column_dimensions["A"].width = 24
     summary_sheet.column_dimensions["B"].width = 80
-    summary_sheet.column_dimensions["D"].width = 26
-    summary_sheet.column_dimensions["E"].width = 16
-    headers = list(result.rows[0].keys()) if result.rows else []
-    for col_index, header in enumerate(headers, 1):
-        cell = detail_sheet.cell(1, col_index, header)
-        cell.font = Font(bold=True, color="FFFFFF")
-        cell.fill = PatternFill("solid", fgColor="1F4E78")
-        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-    for row_index, row in enumerate(result.rows, 2):
+    headers = [
+        "序号", "订单编号", "订单编号(归并)", "店铺名称", "订单状态", "平台回款金额",
+        "采用成本", "物流成本", "订单利润", "商品ID", "商品数量", "商品名称",
+        "计入采购行数", "排除采购行数", "计入采购子订单", "排除采购子订单",
+        "采购商品数量合计", "采购成本", "排除采购金额", "商品表匹配行数", "商品成本单价",
+        "商品成本合计", "成本来源", "核对状态",
+    ]
+
+    def write_detail_sheet(sheet, detail_rows):
         for col_index, header in enumerate(headers, 1):
-            cell = detail_sheet.cell(row_index, col_index, row.get(header))
-            if header in {"订单编号", "订单编号(归并)", "商品ID", "计入采购子订单", "排除采购子订单"}:
-                cell.number_format = "@"
-            if header in {"平台回款金额", "采购成本", "排除采购金额", "商品成本单价", "商品成本合计", "采用成本", "物流成本", "订单利润"}:
-                cell.number_format = '$#,##0.00;[Red]-$#,##0.00'
-    detail_sheet.freeze_panes = "A2"
-    detail_sheet.auto_filter.ref = detail_sheet.dimensions
-    detail_sheet.row_dimensions[1].height = 32
-    for col_index, header in enumerate(headers, 1):
-        width = min(max(12, len(str(header)) * 2), 28)
-        if header in {"计入采购子订单", "排除采购子订单", "核对状态"}:
-            width = 34
-        detail_sheet.column_dimensions[get_column_letter(col_index)].width = width
-    if headers:
+            cell = sheet.cell(1, col_index, header)
+            cell.font = Font(bold=True, color="FFFFFF")
+            cell.fill = PatternFill("solid", fgColor="1F4E78")
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        for row_index, row in enumerate(detail_rows, 2):
+            for col_index, header in enumerate(headers, 1):
+                cell = sheet.cell(row_index, col_index, row.get(header))
+                if header in {"订单编号", "订单编号(归并)", "商品ID", "计入采购子订单", "排除采购子订单"}:
+                    cell.number_format = "@"
+                if header in {"平台回款金额", "采购成本", "排除采购金额", "商品成本单价", "商品成本合计", "采用成本", "物流成本", "订单利润"}:
+                    cell.number_format = '$#,##0.00;[Red]-$#,##0.00'
+        sheet.freeze_panes = "A2"
+        sheet.auto_filter.ref = f"A1:{get_column_letter(len(headers))}{max(1, len(detail_rows) + 1)}"
+        sheet.row_dimensions[1].height = 32
+        for col_index, header in enumerate(headers, 1):
+            width = min(max(12, len(str(header)) * 2), 28)
+            if header in {"计入采购子订单", "排除采购子订单", "核对状态"}:
+                width = 34
+            sheet.column_dimensions[get_column_letter(col_index)].width = width
         status_col = get_column_letter(headers.index("核对状态") + 1)
         profit_col = get_column_letter(headers.index("订单利润") + 1)
-        detail_sheet.conditional_formatting.add(f"{status_col}2:{status_col}{len(result.rows)+1}", FormulaRule(formula=[f'ISNUMBER(SEARCH("待",{status_col}2))'], fill=PatternFill("solid", fgColor="FFF2CC")))
-        detail_sheet.conditional_formatting.add(f"{profit_col}2:{profit_col}{len(result.rows)+1}", CellIsRule(operator="lessThan", formula=["0"], fill=PatternFill("solid", fgColor="F4CCCC")))
+        last_row = max(2, len(detail_rows) + 1)
+        sheet.conditional_formatting.add(f"{status_col}2:{status_col}{last_row}", FormulaRule(formula=[f'ISNUMBER(SEARCH("待",{status_col}2))'], fill=PatternFill("solid", fgColor="FFF2CC")))
+        sheet.conditional_formatting.add(f"{profit_col}2:{profit_col}{last_row}", CellIsRule(operator="lessThan", formula=["0"], fill=PatternFill("solid", fgColor="F4CCCC")))
+
+    profit_rows = [row for row in result.rows if row.get("订单利润") is not None and row["订单利润"] >= 0]
+    loss_rows = [row for row in result.rows if row.get("订单利润") is not None and row["订单利润"] < 0]
+    pending_rows = [row for row in result.rows if row.get("订单利润") is None]
+    for sheet_name, detail_rows in (("盈利订单", profit_rows), ("亏损订单", loss_rows), ("待核对订单", pending_rows)):
+        write_detail_sheet(workbook.create_sheet(sheet_name), detail_rows)
     workbook.save(output_path)
     return output_path
 
