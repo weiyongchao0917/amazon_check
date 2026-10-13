@@ -1,0 +1,8 @@
+__pycache__/
+.pytest_cache/
+node_modules/
+输出/
+_*.json
+_*.mjs
+*.inspect.ndjson
+*.png
