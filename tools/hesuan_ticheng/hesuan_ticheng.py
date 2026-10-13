@@ -259,8 +259,14 @@ def calculate_profit(main_df: pd.DataFrame, purchase_df: pd.DataFrame, product_d
             "订单利润": profit, "成本来源": cost_source, "核对状态": status,
         })
     profit_values = [row["订单利润"] for row in rows if row["订单利润"] is not None]
+    loss_details = [
+        {"订单编号": row["订单编号"], "亏损金额": _amount(abs(row["订单利润"]))}
+        for row in rows
+        if row["订单利润"] is not None and row["订单利润"] < 0
+    ]
     summary = {
         "主订单数": len(rows), "已计算订单数": len(profit_values), "待核对订单数": len(rows) - len(profit_values),
+        "亏损订单数": len(loss_details), "亏损订单明细": loss_details,
         "利润合计": _amount(sum(profit_values)), "采购订单成本合计": _amount(sum(row["采购成本"] or 0 for row in rows)),
         "商品表成本合计": _amount(sum(row["商品成本合计"] or 0 for row in rows)),
         "物流成本合计": _amount(sum(row["物流成本"] or 0 for row in rows)),
@@ -283,14 +289,32 @@ def export_result(result: CalculationResult, output_path: Path) -> Path:
     summary_sheet["A1"] = "订单利润核算"
     summary_sheet["A1"].font = Font(size=16, bold=True, color="FFFFFF")
     summary_sheet["A1"].fill = PatternFill("solid", fgColor="1F4E78")
-    summary_sheet.merge_cells("A1:B1")
+    summary_sheet.merge_cells("A1:E1")
     summary_sheet["A2"] = "计算规则"
     summary_sheet["B2"] = "有效采购子订单各计 $1 物流；无有效采购记录时，商品表回退按一个履约单计 $1。"
-    for row_index, (label, value) in enumerate(result.summary.items(), 4):
+    summary_sheet.merge_cells("B2:E2")
+    summary_sheet["A3"] = "亏损订单数"
+    summary_sheet["B3"] = len(result.summary.get("亏损订单明细", []))
+    summary_sheet["D3"] = "亏损订单号"
+    summary_sheet["E3"] = "亏损金额"
+    header_fill = PatternFill("solid", fgColor="D9EAF7")
+    for cell in (summary_sheet["A3"], summary_sheet["B3"], summary_sheet["D3"], summary_sheet["E3"]):
+        cell.font = Font(bold=True)
+        cell.fill = header_fill
+    for loss_index, detail in enumerate(result.summary.get("亏损订单明细", []), 4):
+        summary_sheet.cell(loss_index, 4, detail["订单编号"])
+        amount_cell = summary_sheet.cell(loss_index, 5, detail["亏损金额"])
+        amount_cell.number_format = '$#,##0.00;[Red]-$#,##0.00'
+    if not result.summary.get("亏损订单明细"):
+        summary_sheet["D4"] = "无亏损订单"
+    metric_values = ((label, value) for label, value in result.summary.items() if label not in {"亏损订单数", "亏损订单明细"})
+    for row_index, (label, value) in enumerate(metric_values, 5):
         summary_sheet.cell(row_index, 1, label)
         summary_sheet.cell(row_index, 2, value)
     summary_sheet.column_dimensions["A"].width = 24
     summary_sheet.column_dimensions["B"].width = 80
+    summary_sheet.column_dimensions["D"].width = 26
+    summary_sheet.column_dimensions["E"].width = 16
     headers = list(result.rows[0].keys()) if result.rows else []
     for col_index, header in enumerate(headers, 1):
         cell = detail_sheet.cell(1, col_index, header)

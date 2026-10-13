@@ -77,3 +77,11 @@ def test_blank_order_id_is_not_matched():
     purchase = pd.DataFrame([purchase_row("", 5)])
     result = calculate_profit(main, purchase, None)
     assert result.rows[0]["核对状态"] == "订单编号为空，待核对"
+
+
+def test_loss_orders_are_listed_with_negative_profit():
+    main = pd.DataFrame([main_row(order="500", revenue=10)])
+    purchase = pd.DataFrame([purchase_row("500", 20)])
+    result = calculate_profit(main, purchase, None)
+    assert result.rows[0]["订单利润"] == -11
+    assert result.summary["亏损订单明细"] == [{"订单编号": "500", "亏损金额": 11}]
