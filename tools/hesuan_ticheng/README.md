@@ -6,6 +6,10 @@
 python hesuan_ticheng.py
 ```
 
+也可以双击 `运行利润核算界面.bat` 打开标准 Windows 桌面界面。界面支持选择工作目录、刷新输入文件、开始核算、查看统计结果和打开生成的 Excel 文件。
+
+如果需要给没有 Python 环境的电脑使用，在本目录执行 `build_exe.bat`，会生成 `dist/订单利润核算.exe`。把这个 exe 放到订单数据目录附近，运行时选择实际数据目录即可。
+
 程序会自动查找：
 
 - 最新的 `导出订单包裹*.xlsx`（也支持 CSV）作为主表；
@@ -39,4 +43,5 @@ python hesuan_ticheng.py --output "E:\\path\\利润结果.xlsx"
 
 ```powershell
 python -m pytest test_hesuan_ticheng.py -q
+python -m pytest test_hesuan_gui.py -q
 ```

@@ -6,3 +6,6 @@ _*.json
 _*.mjs
 *.inspect.ndjson
 *.png
+build/
+dist/
+*.spec
