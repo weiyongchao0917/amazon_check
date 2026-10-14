@@ -1,5 +1,41 @@
 import pandas as pd
-from hesuan_ticheng import calculate_profit, export_result
+from hesuan_ticheng import calculate_profit, export_result, find_input_files
+
+
+def test_detects_arbitrary_filenames_by_headers(tmp_path):
+    pd.DataFrame([main_row()]).to_csv(tmp_path / "本周回款.csv", index=False)
+    pd.DataFrame([purchase_row("100", 20)]).to_csv(tmp_path / "供应商记录.csv", index=False)
+    pd.DataFrame([{"产品id": "P1", "产品成本($)": 4}]).to_csv(tmp_path / "成本资料.csv", index=False)
+    files = find_input_files(tmp_path)
+    assert files.main.name == "本周回款.csv"
+    assert files.purchase.name == "供应商记录.csv"
+    assert files.product.name == "成本资料.csv"
+
+
+def test_detection_ignores_output_and_unrelated_tables(tmp_path):
+    import pytest
+    pd.DataFrame([main_row()]).to_csv(tmp_path / "回款.csv", index=False)
+    pd.DataFrame([{"名称": "不是采购表"}]).to_csv(tmp_path / "采购订单.csv", index=False)
+    with pytest.raises(FileNotFoundError, match="采购表"):
+        find_input_files(tmp_path)
+    pd.DataFrame([purchase_row("100", 20)]).to_csv(tmp_path / "真实采购.csv", index=False)
+    output = dict(main_row(), **{"采用成本": 20, "订单利润": 29})
+    pd.DataFrame([output]).to_csv(tmp_path / "核算结果.csv", index=False)
+    files = find_input_files(tmp_path)
+    assert files.main.name == "回款.csv"
+    assert files.product is None
+
+
+def test_detection_uses_newest_table_and_skips_locked_or_broken_files(tmp_path):
+    import os
+    for name in ("较旧回款.csv", "较新回款.csv"):
+        pd.DataFrame([main_row()]).to_csv(tmp_path / name, index=False, encoding="gb18030")
+    os.utime(tmp_path / "较旧回款.csv", (1000, 1000))
+    pd.DataFrame([purchase_row("100", 20)]).to_csv(tmp_path / "采购.csv", index=False)
+    (tmp_path / "~$正在编辑.xlsx").write_text("lock")
+    (tmp_path / "损坏.xlsx").write_text("invalid")
+    files = find_input_files(tmp_path)
+    assert files.main.name == "较新回款.csv"
 
 
 def main_row(order="100", revenue=50, product_id="P1", quantity=2):

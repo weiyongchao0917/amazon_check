@@ -94,11 +94,11 @@ def _amount(value: Optional[float]) -> Optional[float]:
     return None if value is None else round(float(value), 2)
 
 
-def _read_csv(path: Path) -> pd.DataFrame:
+def _read_csv(path: Path, nrows: Optional[int] = None) -> pd.DataFrame:
     last_error: Optional[Exception] = None
     for encoding in ("utf-8-sig", "gb18030", "utf-8"):
         try:
-            return pd.read_csv(path, encoding=encoding, dtype=object)
+            return pd.read_csv(path, encoding=encoding, dtype=object, nrows=nrows)
         except (UnicodeDecodeError, pd.errors.ParserError) as exc:
             last_error = exc
     raise ValueError(f"无法读取 CSV 文件 {path}: {last_error}")
@@ -114,24 +114,44 @@ def read_input_table(path: Path) -> pd.DataFrame:
 
 def find_input_files(folder: Path) -> InputFiles:
     folder = Path(folder)
-    candidates = [
-        path for path in folder.glob("导出订单包裹*")
-        if path.suffix.lower() in {".xlsx", ".xls", ".xlsm", ".csv"}
-        and not path.name.startswith("~$")
-        and "输出" not in path.parts
-    ]
-    if not candidates:
-        raise FileNotFoundError("未找到导出订单包裹主表（支持 xlsx/csv）")
-    main = max(candidates, key=lambda path: (path.stat().st_mtime, "副本" not in path.stem, path.name))
-    purchase = folder / "采购订单.xlsx"
-    if not purchase.exists():
-        purchase = folder / "采购订单.csv"
-    if not purchase.exists():
-        raise FileNotFoundError("未找到采购订单.xlsx 或采购订单.csv")
-    product = folder / "商品表.xlsx"
-    if not product.exists():
-        product = folder / "商品表.csv"
-    return InputFiles(main, purchase, product if product.exists() else None)
+    if not folder.is_dir():
+        raise FileNotFoundError(f"工作目录不存在：{folder}")
+    candidates: dict[str, list[Path]] = {"主表": [], "采购表": [], "商品表": []}
+    errors = []
+    for path in sorted(folder.iterdir()):
+        if not path.is_file() or path.name.startswith("~$") or path.suffix.lower() not in {".xlsx", ".xlsm", ".csv"}:
+            continue
+        try:
+            frame = _read_csv(path, nrows=0) if path.suffix.lower() == ".csv" else pd.read_excel(path, nrows=0)
+        except Exception as exc:
+            errors.append(f"{path.name}：{exc}")
+            continue
+        columns = {unicodedata.normalize("NFKC", normalize_text(col)).casefold() for col in frame.columns}
+
+        def has(*aliases):
+            return any(alias.casefold() in columns for alias in aliases)
+
+        # 输出文件也含回款列，必须排除，避免被当成新的原始主表。
+        if has("订单利润", "采用成本", "成本来源", "核对状态"):
+            continue
+        order = has("订单编号", "买家订单号", "订单号")
+        if order and has("平台回款金额", "回款金额", "平台回款"):
+            candidates["主表"].append(path)
+        elif order and has("采购总金额", "采购金额", "采购成本", "商品累计金额") and has("采购状态", "订单状态", "状态"):
+            candidates["采购表"].append(path)
+        elif has("产品id", "商品id", "产品编号") and has("产品成本($)", "商品成本($)", "产品成本", "商品成本", "成本"):
+            candidates["商品表"].append(path)
+    missing = [kind for kind in ("主表", "采购表") if not candidates[kind]]
+    if missing:
+        message = f"目录中未识别到{'、'.join(missing)}。请选择包含原始 Excel/CSV 的目录；主表需要订单编号和平台回款金额，采购表需要买家订单号、采购总金额和订单状态。"
+        if errors:
+            message += "\n无法读取的文件：\n" + "\n".join(errors)
+        raise FileNotFoundError(message)
+
+    def latest(kind):
+        return max(candidates[kind], key=lambda path: (path.stat().st_mtime, "副本" not in path.stem, path.name)) if candidates[kind] else None
+
+    return InputFiles(latest("主表"), latest("采购表"), latest("商品表"))
 
 
 def _main_columns(frame: pd.DataFrame) -> dict[str, Optional[str]]:

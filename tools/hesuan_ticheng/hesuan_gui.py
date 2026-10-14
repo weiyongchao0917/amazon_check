@@ -61,7 +61,8 @@ def run_calculation(folder: Path, logistics_fee: float = 1.0) -> tuple[Calculati
 
 def _application_folder() -> Path:
     if getattr(sys, "frozen", False):
-        return Path(sys.executable).resolve().parent
+        folder = Path(sys.executable).resolve().parent
+        return folder.parent if folder.name.lower() == "dist" else folder
     return Path(__file__).resolve().parent
 
 
@@ -97,9 +98,10 @@ class ProfitGui:
 
         files_frame = ttk.LabelFrame(outer, text="输入文件", padding=8)
         files_frame.pack(fill="x", pady=8)
+        ttk.Label(files_frame, text="选择数据目录后按表头识别，文件名不限；同类多份文件使用最近修改的一份。").grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 6))
         for row_index, name in enumerate(("主表", "采购表", "商品表")):
-            ttk.Label(files_frame, text=f"{name}：", width=10).grid(row=row_index, column=0, sticky="w", pady=3)
-            ttk.Label(files_frame, textvariable=self.file_vars[name]).grid(row=row_index, column=1, sticky="w", pady=3)
+            ttk.Label(files_frame, text=f"{name}：", width=10).grid(row=row_index + 1, column=0, sticky="w", pady=3)
+            ttk.Label(files_frame, textvariable=self.file_vars[name]).grid(row=row_index + 1, column=1, sticky="w", pady=3)
         files_frame.columnconfigure(1, weight=1)
 
         action_frame = ttk.Frame(outer)

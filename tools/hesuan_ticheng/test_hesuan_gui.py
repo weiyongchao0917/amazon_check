@@ -7,6 +7,14 @@ from hesuan_ticheng import CalculationResult, InputFiles
 from hesuan_gui import format_input_status, run_calculation, summarize_result
 
 
+def test_frozen_default_directory_skips_dist_only(tmp_path):
+    from hesuan_gui import _application_folder
+    with patch("sys.frozen", True, create=True), patch("sys.executable", str(tmp_path / "dist" / "app.exe")):
+        assert _application_folder() == tmp_path
+    with patch("sys.frozen", True, create=True), patch("sys.executable", str(tmp_path / "app.exe")):
+        assert _application_folder() == tmp_path
+
+
 def test_format_input_status_marks_optional_product_file():
     status = format_input_status(Path("main.xlsx"), Path("purchase.xlsx"), None)
     assert status == {
