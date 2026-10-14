@@ -108,6 +108,54 @@ def test_valid_purchase_cost_has_priority_over_product_cost():
     assert row["订单利润"] == 29
 
 
+def test_order_contains_total_amount_and_fixed_expense():
+    main = pd.DataFrame([main_row(order="450", revenue=40)])
+    main.loc[0, "订单总金额"] = 50
+    purchase = pd.DataFrame([purchase_row("450", 20)])
+    result = calculate_profit(main, purchase, None)
+    row = result.rows[0]
+    assert row["订单总金额"] == 50
+    assert row["固定支出"] == 10
+    assert row["订单利润"] == 19
+
+
+def test_product_group_combines_multiple_links_and_calculates_unit_fixed_expense():
+    main = pd.DataFrame([
+        main_row(order="501", revenue=40, product_id="L1", quantity=2),
+        main_row(order="502", revenue=30, product_id="L2", quantity=1),
+    ])
+    main.loc[0, "订单总金额"] = 50
+    main.loc[1, "订单总金额"] = 40
+    purchase = pd.DataFrame([purchase_row("501", 10), purchase_row("502", 8)])
+    products = pd.DataFrame([
+        {"商品组ID": "PG-000001", "产品id": "L1", "产品成本($)": 4},
+        {"商品组ID": "PG-000001", "产品id": "L2", "产品成本($)": 5},
+    ])
+    result = calculate_profit(main, purchase, products)
+    assert result.rows[0]["商品组ID"] == "PG-000001"
+    assert len(result.product_rows) == 1
+    summary = result.product_rows[0]
+    assert summary["商品组ID"] == "PG-000001"
+    assert summary["销售数量"] == 3
+    assert summary["固定支出合计"] == 20
+    assert summary["单件固定支出"] == 6.67
+    assert summary["产品ID数量"] == 2
+
+
+def test_missing_product_group_does_not_merge_different_products():
+    main = pd.DataFrame([
+        main_row(order="503", revenue=20, product_id="L3"),
+        main_row(order="504", revenue=20, product_id="L4"),
+    ])
+    purchase = pd.DataFrame([purchase_row("503", 5), purchase_row("504", 6)])
+    products = pd.DataFrame([
+        {"产品id": "L3", "产品成本($)": 3},
+        {"产品id": "L4", "产品成本($)": 4},
+    ])
+    result = calculate_profit(main, purchase, products)
+    assert {row["商品组ID"] for row in result.product_rows} == {"未归组-L3", "未归组-L4"}
+
+
 def test_blank_order_id_is_not_matched():
     main = pd.DataFrame([main_row(order="", revenue=20)])
     purchase = pd.DataFrame([purchase_row("", 5)])
@@ -137,11 +185,12 @@ def test_export_splits_profit_and_loss_sheets_and_orders_profit_columns(tmp_path
 
     import openpyxl
     workbook = openpyxl.load_workbook(output, data_only=True)
-    assert workbook.sheetnames == ["汇总", "盈利订单", "亏损订单", "待核对订单"]
+    assert workbook.sheetnames == ["汇总", "盈利订单", "亏损订单", "待核对订单", "商品成本汇总"]
     assert workbook["汇总"]["D3"].value is None
     profit_headers = [cell.value for cell in workbook["盈利订单"][1]]
     loss_headers = [cell.value for cell in workbook["亏损订单"][1]]
     assert "下单时间" not in profit_headers
-    assert profit_headers[profit_headers.index("平台回款金额") + 1:profit_headers.index("平台回款金额") + 4] == ["采用成本", "物流成本", "订单利润"]
+    assert profit_headers[profit_headers.index("平台回款金额") + 1:profit_headers.index("平台回款金额") + 4] == ["固定支出", "采用成本", "物流成本"]
     assert loss_headers == profit_headers
     assert workbook["亏损订单"].cell(2, loss_headers.index("订单利润") + 1).value == -11
+    assert workbook["商品成本汇总"].max_row == 2

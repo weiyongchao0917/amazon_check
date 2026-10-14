@@ -7,7 +7,7 @@ import math
 import re
 import sys
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable, Optional
@@ -22,6 +22,7 @@ EXCLUDED_STATUS_WORDS = ("退款", "拒绝", "驳回")
 class CalculationResult:
     rows: list[dict[str, Any]]
     summary: dict[str, Any]
+    product_rows: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -180,33 +181,37 @@ def _purchase_columns(frame: pd.DataFrame) -> dict[str, Optional[str]]:
 
 def _product_columns(frame: pd.DataFrame) -> dict[str, Optional[str]]:
     return {
+        "group_id": _find_column(frame, ("商品组ID", "商品组id", "父商品ID", "父产品ID", "商品分组ID"), None),
         "product_id": _find_column(frame, ("产品id", "产品ID", "商品id", "商品ID", "产品编号"), 0),
         "unit_cost": _find_column(frame, ("产品成本($)", "商品成本($)", "产品成本", "商品成本", "成本"), 2),
+        "name": _find_column(frame, ("产品名称", "商品名称", "名称"), 1),
     }
 
 
-def _build_product_costs(product_df: Optional[pd.DataFrame]) -> dict[str, float]:
+def _build_product_catalog(product_df: Optional[pd.DataFrame]) -> dict[str, dict[str, Any]]:
     if product_df is None or product_df.empty:
         return {}
     columns = _product_columns(product_df)
     if columns["product_id"] is None or columns["unit_cost"] is None:
         return {}
-    result: dict[str, float] = {}
+    result: dict[str, dict[str, Any]] = {}
     for _, row in product_df.iterrows():
         product_id = normalize_id(_value(row, columns["product_id"]))
         unit_cost = parse_number(_value(row, columns["unit_cost"]))
         if not product_id or unit_cost is None:
             continue
-        if product_id in result and not math.isclose(result[product_id], unit_cost, abs_tol=0.000001):
+        if product_id in result and not math.isclose(float(result[product_id]["unit_cost"]), unit_cost, abs_tol=0.000001):
             raise ValueError(f"商品表产品 ID {product_id} 存在不同成本，无法安全计算")
-        result[product_id] = unit_cost
+        group_id = normalize_id(_value(row, columns["group_id"])) if columns["group_id"] else ""
+        name = normalize_text(_value(row, columns["name"])) if columns["name"] else ""
+        result[product_id] = {"unit_cost": unit_cost, "group_id": group_id, "name": name}
     return result
 
 
 def calculate_profit(main_df: pd.DataFrame, purchase_df: pd.DataFrame, product_df: Optional[pd.DataFrame] = None, logistics_fee: float = 1.0) -> CalculationResult:
     main_columns = _main_columns(main_df)
     purchase_columns = _purchase_columns(purchase_df)
-    product_costs = _build_product_costs(product_df)
+    product_catalog = _build_product_catalog(product_df)
     purchase_groups: dict[str, list[dict[str, Any]]] = {}
     if purchase_columns["order_id"] is not None:
         for source_index, row in purchase_df.iterrows():
@@ -228,20 +233,26 @@ def calculate_profit(main_df: pd.DataFrame, purchase_df: pd.DataFrame, product_d
         raw_order_id = _value(row, main_columns["order_id"])
         order_id = normalize_id(raw_order_id)
         base = base_order_number(order_id)
+        order_total = _number(row, main_columns["order_total"])
         revenue = _number(row, main_columns["platform_return"])
         if revenue is None:
-            revenue = _number(row, main_columns["order_total"])
+            revenue = order_total
+        fixed_expense = _amount(order_total - revenue) if order_total is not None and revenue is not None else None
         quantity = _number(row, main_columns["quantity"])
         quantity = 1 if quantity is None else quantity
         product_id = normalize_id(_value(row, main_columns["product_id"]))
+        product_info = product_catalog.get(product_id, {})
+        group_id = normalize_id(product_info.get("group_id")) if product_info else ""
+        if not group_id:
+            group_id = f"未归组-{product_id or '未识别商品'}"
         matches = purchase_groups.get(base, []) if base else []
         included = [item for item in matches if not item["excluded"]]
         excluded = [item for item in matches if item["excluded"]]
         costs = [item["cost"] for item in included if item["cost"] is not None]
         purchase_cost = _amount(sum(costs)) if costs and len(costs) == len(included) else None
         excluded_amount = _amount(sum(item["cost"] for item in excluded if item["cost"] is not None))
-        product_unit_cost = product_costs.get(product_id)
-        product_total = _amount(product_unit_cost * quantity) if product_unit_cost is not None else None
+        product_unit_cost = product_info.get("unit_cost")
+        product_total = _amount(float(product_unit_cost) * quantity) if product_unit_cost is not None else None
         if not order_id:
             status = "订单编号为空，待核对"
         elif purchase_cost is not None:
@@ -262,12 +273,16 @@ def calculate_profit(main_df: pd.DataFrame, purchase_df: pd.DataFrame, product_d
             logistics = _amount(logistics_fee) or 0.0
         else:
             adopted_cost, cost_source, logistics = None, "", 0.0
-        profit = _amount(revenue - adopted_cost - logistics) if revenue is not None and adopted_cost is not None else None
+        if adopted_cost is not None and revenue is not None:
+            profit = _amount(order_total - fixed_expense - adopted_cost - logistics) if order_total is not None and fixed_expense is not None else _amount(revenue - adopted_cost - logistics)
+        else:
+            profit = None
         rows.append({
             "序号": sequence, "订单编号": raw_order_id, "订单编号(归并)": base,
             "店铺名称": _value(row, main_columns["store"]), "订单状态": _value(row, main_columns["status"]),
-            "下单时间": _value(row, main_columns["order_time"]), "平台回款金额": _amount(revenue),
-            "商品ID": _value(row, main_columns["product_id"]), "商品数量": quantity,
+            "订单总金额": _amount(order_total), "平台回款金额": _amount(revenue), "固定支出": fixed_expense,
+            "采用成本": adopted_cost, "物流成本": logistics, "订单利润": profit,
+            "商品组ID": group_id, "商品ID": _value(row, main_columns["product_id"]), "商品数量": quantity,
             "商品名称": _value(row, main_columns["chinese_name"]) or _value(row, main_columns["original_name"]),
             "计入采购行数": len(included), "排除采购行数": len(excluded),
             "计入采购子订单": ", ".join(item["suborder"] for item in included),
@@ -275,9 +290,10 @@ def calculate_profit(main_df: pd.DataFrame, purchase_df: pd.DataFrame, product_d
             "采购商品数量合计": _amount(sum(item["quantity"] for item in included if item["quantity"] is not None)),
             "采购成本": purchase_cost, "排除采购金额": excluded_amount,
             "商品表匹配行数": 1 if product_total is not None else 0, "商品成本单价": _amount(product_unit_cost),
-            "商品成本合计": product_total, "采用成本": adopted_cost, "物流成本": logistics,
-            "订单利润": profit, "成本来源": cost_source, "核对状态": status,
+            "商品成本合计": product_total, "成本来源": cost_source, "核对状态": status,
         })
+
+    product_rows = _build_product_summary(rows)
     profit_values = [row["订单利润"] for row in rows if row["订单利润"] is not None]
     loss_details = [
         {"订单编号": row["订单编号"], "亏损金额": _amount(abs(row["订单利润"]))}
@@ -286,14 +302,71 @@ def calculate_profit(main_df: pd.DataFrame, purchase_df: pd.DataFrame, product_d
     ]
     summary = {
         "主订单数": len(rows), "已计算订单数": len(profit_values), "待核对订单数": len(rows) - len(profit_values),
-        "亏损订单数": len(loss_details), "亏损订单明细": loss_details,
+        "亏损订单数": len(loss_details), "亏损订单明细": loss_details, "商品组数": len(product_rows),
         "利润合计": _amount(sum(profit_values)), "采购订单成本合计": _amount(sum(row["采购成本"] or 0 for row in rows)),
         "商品表成本合计": _amount(sum(row["商品成本合计"] or 0 for row in rows)),
         "物流成本合计": _amount(sum(row["物流成本"] or 0 for row in rows)),
+        "固定支出合计": _amount(sum(row["固定支出"] or 0 for row in rows)),
         "排除采购行数": sum(row["排除采购行数"] for row in rows),
         "排除采购金额": _amount(sum(row["排除采购金额"] or 0 for row in rows)),
     }
-    return CalculationResult(rows, summary)
+    return CalculationResult(rows, summary, product_rows)
+
+
+def _build_product_summary(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    groups: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        group_id = row["商品组ID"]
+        group = groups.setdefault(group_id, {
+            "商品组ID": group_id, "产品ID": set(), "商品名称": set(), "订单数": 0,
+            "销售数量": 0.0, "订单总金额": 0.0, "平台回款金额": 0.0, "固定支出": [],
+            "采购成本": [], "物流成本": [], "商品利润": [], "固定支出缺失订单数": 0,
+            "待核对订单数": 0,
+        })
+        product_id = normalize_id(row.get("商品ID"))
+        if product_id:
+            group["产品ID"].add(product_id)
+        name = normalize_text(row.get("商品名称"))
+        if name:
+            group["商品名称"].add(name)
+        group["订单数"] += 1
+        group["销售数量"] += float(row.get("商品数量") or 0)
+        group["订单总金额"] += float(row.get("订单总金额") or 0)
+        group["平台回款金额"] += float(row.get("平台回款金额") or 0)
+        if row.get("固定支出") is None:
+            group["固定支出缺失订单数"] += 1
+        else:
+            group["固定支出"].append(row["固定支出"])
+        if row.get("采购成本") is not None:
+            group["采购成本"].append(row["采购成本"])
+        if row.get("物流成本") is not None:
+            group["物流成本"].append(row["物流成本"])
+        if row.get("订单利润") is None:
+            group["待核对订单数"] += 1
+        else:
+            group["商品利润"].append(row["订单利润"])
+
+    output = []
+    for group in groups.values():
+        fixed_total = _amount(sum(group["固定支出"])) if group["固定支出"] else None
+        quantity = group["销售数量"]
+        output.append({
+            "商品组ID": group["商品组ID"],
+            "归组状态": "未归组" if group["商品组ID"].startswith("未归组-") else "已归组",
+            "产品ID数量": len(group["产品ID"]),
+            "包含产品ID": ", ".join(sorted(group["产品ID"])),
+            "商品名称": ", ".join(sorted(group["商品名称"])),
+            "订单数": group["订单数"], "销售数量": _amount(quantity),
+            "订单总金额": _amount(group["订单总金额"]), "平台回款金额": _amount(group["平台回款金额"]),
+            "固定支出合计": fixed_total,
+            "单件固定支出": _amount(fixed_total / quantity) if fixed_total is not None and quantity else None,
+            "固定支出缺失订单数": group["固定支出缺失订单数"],
+            "采购成本": _amount(sum(group["采购成本"])) if group["采购成本"] else None,
+            "物流成本": _amount(sum(group["物流成本"])) if group["物流成本"] else None,
+            "商品利润": _amount(sum(group["商品利润"])) if group["商品利润"] else None,
+            "待核对订单数": group["待核对订单数"],
+        })
+    return sorted(output, key=lambda row: row["商品组ID"])
 
 
 def export_result(result: CalculationResult, output_path: Path) -> Path:
@@ -319,8 +392,8 @@ def export_result(result: CalculationResult, output_path: Path) -> Path:
     summary_sheet.column_dimensions["A"].width = 24
     summary_sheet.column_dimensions["B"].width = 80
     headers = [
-        "序号", "订单编号", "订单编号(归并)", "店铺名称", "订单状态", "平台回款金额",
-        "采用成本", "物流成本", "订单利润", "商品ID", "商品数量", "商品名称",
+        "序号", "订单编号", "订单编号(归并)", "店铺名称", "订单状态", "订单总金额", "平台回款金额",
+        "固定支出", "采用成本", "物流成本", "订单利润", "商品组ID", "商品ID", "商品数量", "商品名称",
         "计入采购行数", "排除采购行数", "计入采购子订单", "排除采购子订单",
         "采购商品数量合计", "采购成本", "排除采购金额", "商品表匹配行数", "商品成本单价",
         "商品成本合计", "成本来源", "核对状态",
@@ -335,9 +408,9 @@ def export_result(result: CalculationResult, output_path: Path) -> Path:
         for row_index, row in enumerate(detail_rows, 2):
             for col_index, header in enumerate(headers, 1):
                 cell = sheet.cell(row_index, col_index, row.get(header))
-                if header in {"订单编号", "订单编号(归并)", "商品ID", "计入采购子订单", "排除采购子订单"}:
+                if header in {"订单编号", "订单编号(归并)", "商品组ID", "商品ID", "计入采购子订单", "排除采购子订单"}:
                     cell.number_format = "@"
-                if header in {"平台回款金额", "采购成本", "排除采购金额", "商品成本单价", "商品成本合计", "采用成本", "物流成本", "订单利润"}:
+                if header in {"订单总金额", "平台回款金额", "固定支出", "采购成本", "排除采购金额", "商品成本单价", "商品成本合计", "采用成本", "物流成本", "订单利润"}:
                     cell.number_format = '$#,##0.00;[Red]-$#,##0.00'
         sheet.freeze_panes = "A2"
         sheet.auto_filter.ref = f"A1:{get_column_letter(len(headers))}{max(1, len(detail_rows) + 1)}"
@@ -358,6 +431,29 @@ def export_result(result: CalculationResult, output_path: Path) -> Path:
     pending_rows = [row for row in result.rows if row.get("订单利润") is None]
     for sheet_name, detail_rows in (("盈利订单", profit_rows), ("亏损订单", loss_rows), ("待核对订单", pending_rows)):
         write_detail_sheet(workbook.create_sheet(sheet_name), detail_rows)
+    product_headers = [
+        "商品组ID", "归组状态", "产品ID数量", "包含产品ID", "商品名称", "订单数", "销售数量",
+        "订单总金额", "平台回款金额", "固定支出合计", "单件固定支出", "固定支出缺失订单数",
+        "采购成本", "物流成本", "商品利润", "待核对订单数",
+    ]
+    product_sheet = workbook.create_sheet("商品成本汇总")
+    for col_index, header in enumerate(product_headers, 1):
+        cell = product_sheet.cell(1, col_index, header)
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill("solid", fgColor="1F4E78")
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    for row_index, row in enumerate(result.product_rows, 2):
+        for col_index, header in enumerate(product_headers, 1):
+            cell = product_sheet.cell(row_index, col_index, row.get(header))
+            if header in {"商品组ID", "包含产品ID"}:
+                cell.number_format = "@"
+            if header in {"订单总金额", "平台回款金额", "固定支出合计", "单件固定支出", "采购成本", "物流成本", "商品利润"}:
+                cell.number_format = '$#,##0.00;[Red]-$#,##0.00'
+    product_sheet.freeze_panes = "A2"
+    product_sheet.auto_filter.ref = f"A1:{get_column_letter(len(product_headers))}{max(1, len(result.product_rows) + 1)}"
+    product_sheet.row_dimensions[1].height = 32
+    for col_index, header in enumerate(product_headers, 1):
+        product_sheet.column_dimensions[get_column_letter(col_index)].width = 30 if header in {"包含产品ID", "商品名称"} else min(max(12, len(header) * 2), 24)
     workbook.save(output_path)
     return output_path
 
